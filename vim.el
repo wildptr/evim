@@ -22,42 +22,40 @@
   (when (and (= (point) (line-end-position)) (> (point) (line-beginning-position)))
     (backward-char)))
 
-;; FIXME cursor should always stay on last character when last motion is '$'
 (defun vim-motion-up (&optional n)
   (unless n (setq n 1))
   (forward-line (- n))
   (vim-move-to-goal-column))
 
 (put 'vim-motion-up 'linewise t)
+(put 'vim-motion-up 'preserve-goal-column t)
 
 (defun vim-motion-down (&optional n)
   (unless n (setq n 1))
   (forward-line n)
   (vim-move-to-goal-column))
 
+(put 'vim-motion-down 'linewise t)
+(put 'vim-motion-down 'preserve-goal-column t)
+
 (defun vim-motion-left (&optional n)
   (unless n (setq n 1))
   (let* ((bol (line-beginning-position))
 	 (dest (max bol (- (point) n))))
     (when (< dest (point))
-      (goto-char dest)
-      (vim-update-goal-column))))
+      (goto-char dest))))
 
 (defun vim-motion-right (&optional n)
   (unless n (setq n 1))
-  (let* ((eol (line-end-position))
-	 (dest (min eol (+ (point) n))))
+  (let* ((adjusted-eol (max (1- (line-end-position)) (line-beginning-position)))
+	 (dest (min adjusted-eol (+ (point) n))))
     (when (> dest (point))
-      (goto-char dest)
-      (vim-update-goal-column))))
-
-(put 'vim-motion-down 'linewise t)
+      (goto-char dest))))
 
 (defun vim-motion-indent (&optional n)
   ;; `n` is ignored
   (goto-char (line-beginning-position))
-  (skip-chars-forward " \t")
-  (vim-update-goal-column))
+  (skip-chars-forward " \t"))
 
 (defun vim-motion-bol (&optional n)
   ;; `n` is ignored
@@ -82,68 +80,63 @@
        ((vim-punct-p c) (skip-chars-forward "!-/:-@[-^`{-~"))
        )
       ;; FIXME
-      (skip-chars-forward " \t\n")))
-  (vim-update-goal-column))
+      (skip-chars-forward " \t\n"))))
 
 (defun vim-motion-forward-paragraph (&optional n)
-  (forward-paragraph n)
-  (vim-update-goal-column))
+  (forward-paragraph n))
 
 (defun vim-motion-backward-paragraph (&optional n)
-  (backward-paragraph n)
-  (vim-update-goal-column))
+  (backward-paragraph n))
     
 (defun vim-motion-forward-sentence (&optional n)
-  (forward-sentence n)
-  (vim-update-goal-column))
+  (forward-sentence n))
 
 (defun vim-motion-backward-sentence (&optional n)
-  (backward-sentence n)
-  (vim-update-goal-column))
+  (backward-sentence n))
 
 (defun vim-forward-to-char (c)
   ;; look for c in range (point+1, eol)
   ;; throws error if not found
-  (when (and (/= (point) (point-max)) (/= (char-after) 10))
-    (forward-char))
-  (while (and (/= (point) (point-max)) (/= (char-after) 10) (/= (char-after) c))
-    (forward-char))
-  (unless (= (char-after) c)
-    (error "vim-forward-to-char: '%c' not found" c)))
+  (let ((saved-point (point))) ; lest we fail
+    (when (and (/= (point) (point-max)) (/= (char-after) 10))
+      (forward-char))
+    (while (and (/= (point) (point-max)) (/= (char-after) 10) (/= (char-after) c))
+      (forward-char))
+    (unless (= (char-after) c)
+      (goto-char saved-point)
+      (error "vim-forward-to-char: '%c' not found" c))))
 
 (defun vim-backward-till-char (c)
   ;; look for c in range (bol, point)
   ;; throws error if not found
-  (while (and (/= (point) (point-min)) (/= (char-before) 10) (/= (char-before) c))
-    (backward-char))
-  (unless (= (char-before) c)
-    (error "vim-backward-to-char: '%c' not found" c)))
+  (let ((saved-point (point)))
+    (while (and (/= (point) (point-min)) (/= (char-before) 10) (/= (char-before) c))
+      (backward-char))
+    (unless (= (char-before) c)
+      (goto-char saved-point)
+      (error "vim-backward-to-char: '%c' not found" c))))
 
 (defun vim-motion-forward-to-char (&optional n)
   (unless n (setq n 1))
   (let ((c (read-char)))
     (dotimes (i n)
-      (vim-forward-to-char c)))
-  (vim-update-goal-column))
+      (vim-forward-to-char c))))
 
 (defun vim-motion-backward-till-char (&optional n)
   (unless n (setq n 1))
   (let ((c (read-char)))
     (dotimes (i n)
-      (vim-backward-till-char c)))
-  (vim-update-goal-column))
+      (vim-backward-till-char c))))
 
 (put 'vim-motion-forward-to-char 'inclusive t)
 
 (defun vim-motion-forward-till-char (&optional n)
   (vim-motion-forward-to-char n)
-  (backward-char)
-  (vim-update-goal-column))
+  (backward-char))
 
 (defun vim-motion-backward-to-char (&optional n)
   (vim-motion-backward-till-char n)
-  (backward-char)
-  (vim-update-goal-column))
+  (backward-char))
 
 (put 'vim-motion-forward-till-char 'inclusive t)
 
@@ -153,9 +146,10 @@
 (defvar vim-last-repeatable-command)
 
 (defun vim-search-forward (regexp)
-  (forward-char)
-  ;; this sets point at end of match
-  (search-forward-regexp regexp)
+  (save-excursion
+    (forward-char)
+    ;; this sets point at end of match
+    (search-forward-regexp regexp))
   ;; so go to beginning of match
   (goto-char (match-beginning 0)))
 
@@ -168,8 +162,7 @@
 	  (lambda () (vim-search-forward input-regexp))
 	  vim-last-search-opposite-motion-command
 	  (lambda () (vim-search-backward input-regexp)))
-    (dotimes (i (or n 1)) (funcall vim-last-search-motion-command)))
-  (vim-update-goal-column))
+    (dotimes (i (or n 1)) (funcall vim-last-search-motion-command))))
 
 (defun vim-motion-search-backward (&optional n)
   (let ((input-regexp (read-from-minibuffer "?")))
@@ -177,20 +170,17 @@
 	  (lambda () (vim-search-backward input-regexp))
 	  vim-last-search-opposite-motion-command
 	  (lambda () (vim-search-forward input-regexp)))
-    (dotimes (i (or n 1)) (funcall vim-last-search-motion-command)))
-  (vim-update-goal-column))
+    (dotimes (i (or n 1)) (funcall vim-last-search-motion-command))))
 
 (defun vim-motion-search-next (&optional n)
   (unless vim-last-search-motion-command
     (error "no previous regular expression"))
-  (dotimes (i (or n 1)) (funcall vim-last-search-motion-command))
-  (vim-update-goal-column))
+  (dotimes (i (or n 1)) (funcall vim-last-search-motion-command)))
 
 (defun vim-motion-search-previous (&optional n)
   (unless vim-last-search-opposite-motion-command
     (error "no previous regular expression"))
-  (dotimes (i (or n 1)) (funcall vim-last-search-opposite-motion-command))
-  (vim-update-goal-column))
+  (dotimes (i (or n 1)) (funcall vim-last-search-opposite-motion-command)))
 
 (defun vim-motion-goto-line (&optional n)
   ;;(message "vim-motion-goto-line: %S" n)
@@ -206,6 +196,10 @@
   (let ((col (1- (or n 1))))
     (move-to-column col)
     (setq vim-goal-column col)))
+
+(defun vim-motion-current-line (&optional n))
+
+(put 'vim-motion-current-line 'linewise t)
 
 (defun vim-erase-word ()
   (interactive)
@@ -273,7 +267,8 @@
 
 (defun vim-delete-line ()
   (interactive)
-  (vim-delete (line-beginning-position) (+ (line-end-position) 1)))
+  (vim-delete (line-beginning-position) (+ (line-end-position) 1))
+  (vim-motion-indent))
 
 ;; enter normal mode
 (defun vim-escape ()
@@ -343,7 +338,9 @@
 			      (forward-char))
 			    (funcall action (point) saved-eol)))))))
 	    (dotimes (i arg) (funcall vim-last-repeatable-command))
-	    (setq vim-prefix-arg-motion nil))
+	    (setq vim-prefix-arg-motion nil)
+	    (vim-motion-indent)
+	    (vim-update-goal-column))
 	;; character-wise motion
 	(if (get motion 'inclusive)
 	    ;; inclusive motion
@@ -360,7 +357,8 @@
 			    (forward-char))
 			  (funcall action saved-point (point))))))
 	      (dotimes (i arg) (funcall vim-last-repeatable-command))
-	      (setq vim-prefix-arg-motion nil))
+	      (setq vim-prefix-arg-motion nil)
+	      (vim-update-goal-column))
 	  ;; exclusive motion
 	  (lambda (arg)
 	    (interactive "P")
@@ -373,11 +371,23 @@
 			(funcall motion saved-arg)
 			(funcall action saved-point (point))))))
 	    (dotimes (i arg) (funcall vim-last-repeatable-command))
-	    (setq vim-prefix-arg-motion nil))))
+	    (setq vim-prefix-arg-motion nil)
+	    (vim-update-goal-column))))
     ;; action is nil
-    (lambda (arg)
-      (interactive "P")
-      (funcall motion arg))))
+    (let ((update-goal-column-if-necessary
+	  (if (get motion 'preserve-goal-column)
+	      (lambda ())
+	    (lambda () (vim-update-goal-column)))))
+      (lambda (arg)
+	(interactive "P")
+	(funcall motion arg)
+	(funcall update-goal-column-if-necessary)))))
+
+(defun vim-delete-line (arg)
+  (interactive "P")
+  (let ((bol (line-beginning-position)))
+    (forward-line arg)
+    (vim-delete bol (point))))
 
 (defvar vim-normal-map (make-sparse-keymap))
 (define-key vim-normal-map "A" 'vim-append-eol)
@@ -470,6 +480,8 @@
 	   ))
       (let ((motion-key (car pair)) (motion-fn (cdr pair)))
 	(define-key op-map motion-key (vim-compose-command op-fn motion-fn))))
+    (when op-key
+      (define-key op-map op-key (vim-compose-command op-fn 'vim-motion-current-line)))
     (if op-key
 	(progn
 	  (define-key op-map "1" (vim-digit-argument-motion-with-map op-map 1))
