@@ -12,79 +12,94 @@
 (defun vim-at-eol ()
   (= (point) (line-end-position)))
 
-(defun vim-motion-left (&optional n)
-  (unless n (setq n 1))
-  (let ((bol (line-beginning-position))
-	(p (- (point) n)))
-    (if (>= p bol) p bol)))
+(defvar vim-goal-column 0)
+
+(defun vim-update-goal-column ()
+  (setq vim-goal-column (current-column)))
+
+(defun vim-move-to-goal-column ()
+  (move-to-column vim-goal-column)
+  (when (and (= (point) (line-end-position)) (> (point) (line-beginning-position)))
+    (backward-char)))
 
 ;; FIXME cursor should always stay on last character when last motion is '$'
 (defun vim-motion-up (&optional n)
   (unless n (setq n 1))
-  (save-excursion
-    (previous-line n)
-    (point)))
+  (forward-line (- n))
+  (vim-move-to-goal-column))
 
 (put 'vim-motion-up 'linewise t)
 
 (defun vim-motion-down (&optional n)
   (unless n (setq n 1))
-  (save-excursion
-    (next-line n)
-    (point)))
+  (forward-line n)
+  (vim-move-to-goal-column))
 
-(put 'vim-motion-down 'linewise t)
+(defun vim-motion-left (&optional n)
+  (unless n (setq n 1))
+  (let* ((bol (line-beginning-position))
+	 (dest (max bol (- (point) n))))
+    (when (< dest (point))
+      (goto-char dest)
+      (vim-update-goal-column))))
 
 (defun vim-motion-right (&optional n)
   (unless n (setq n 1))
-  (let ((eol (line-end-position))
-	(p (+ (point) n)))
-    (if (<= p eol) p eol)))
+  (let* ((eol (line-end-position))
+	 (dest (min eol (+ (point) n))))
+    (when (> dest (point))
+      (goto-char dest)
+      (vim-update-goal-column))))
+
+(put 'vim-motion-down 'linewise t)
 
 (defun vim-motion-indent (&optional n)
   ;; `n` is ignored
-  (save-excursion
-    (goto-char (line-beginning-position))
-    (skip-chars-forward " \t")
-    (point)))
+  (goto-char (line-beginning-position))
+  (skip-chars-forward " \t")
+  (vim-update-goal-column))
 
 (defun vim-motion-bol (&optional n)
   ;; `n` is ignored
-  (line-beginning-position))
+  (beginning-of-line)
+  (vim-update-goal-column))
 
 (defun vim-motion-eol (&optional n)
   (unless n (setq n 1))
-  (save-excursion
-    (goto-char (line-end-position n))
-    (unless (= (point) (line-beginning-position))
-      (backward-char))
-    (point)))
+  (goto-char (line-end-position n))
+  (unless (= (point) (line-beginning-position))
+    (backward-char))
+  (setq vim-goal-column most-positive-fixnum))
 
 (put 'vim-motion-eol 'inclusive t)
 
 (defun vim-motion-forward-word (&optional n)
   (unless n (setq n 1))
-  (save-excursion
-    (dotimes (i n)
-      (let ((c (char-after)))
-	(cond
-	 ((vim-alnum-p c) (skip-chars-forward "a-zA-Z_0-9"))
-	 ((vim-punct-p c) (skip-chars-forward "!-/:-@[-^`{-~"))
-	 )
-	(skip-chars-forward " \t\n")))
-    (point)))
+  (dotimes (i n)
+    (let ((c (char-after)))
+      (cond
+       ((vim-alnum-p c) (skip-chars-forward "a-zA-Z_0-9"))
+       ((vim-punct-p c) (skip-chars-forward "!-/:-@[-^`{-~"))
+       )
+      ;; FIXME
+      (skip-chars-forward " \t\n")))
+  (vim-update-goal-column))
 
 (defun vim-motion-forward-paragraph (&optional n)
-  (save-excursion (forward-paragraph n) (point)))
+  (forward-paragraph n)
+  (vim-update-goal-column))
 
 (defun vim-motion-backward-paragraph (&optional n)
-  (save-excursion (backward-paragraph n) (point)))
+  (backward-paragraph n)
+  (vim-update-goal-column))
     
 (defun vim-motion-forward-sentence (&optional n)
-  (save-excursion (forward-sentence n) (point)))
+  (forward-sentence n)
+  (vim-update-goal-column))
 
 (defun vim-motion-backward-sentence (&optional n)
-  (save-excursion (backward-sentence n) (point)))
+  (backward-sentence n)
+  (vim-update-goal-column))
 
 (defun vim-forward-to-char (c)
   ;; look for c in range (point+1, eol)
@@ -106,29 +121,91 @@
 
 (defun vim-motion-forward-to-char (&optional n)
   (unless n (setq n 1))
-  (save-excursion
-    (let ((c (read-char)))
-      (dotimes (i n)
-	(vim-forward-to-char c))
-      (point))))
+  (let ((c (read-char)))
+    (dotimes (i n)
+      (vim-forward-to-char c)))
+  (vim-update-goal-column))
 
 (defun vim-motion-backward-till-char (&optional n)
   (unless n (setq n 1))
-  (save-excursion
-    (let ((c (read-char)))
-      (dotimes (i n)
-	(vim-backward-till-char c))
-      (point))))
+  (let ((c (read-char)))
+    (dotimes (i n)
+      (vim-backward-till-char c)))
+  (vim-update-goal-column))
 
 (put 'vim-motion-forward-to-char 'inclusive t)
 
 (defun vim-motion-forward-till-char (&optional n)
-  (1- (vim-motion-forward-to-char n)))
+  (vim-motion-forward-to-char n)
+  (backward-char)
+  (vim-update-goal-column))
 
 (defun vim-motion-backward-to-char (&optional n)
-  (1- (vim-motion-backward-till-char n)))
+  (vim-motion-backward-till-char n)
+  (backward-char)
+  (vim-update-goal-column))
 
 (put 'vim-motion-forward-till-char 'inclusive t)
+
+(defvar vim-prefix-arg-motion nil)
+(defvar vim-last-search-motion-command)
+(defvar vim-last-search-opposite-motion-command)
+(defvar vim-last-repeatable-command)
+
+(defun vim-search-forward (regexp)
+  (forward-char)
+  ;; this sets point at end of match
+  (search-forward-regexp regexp)
+  ;; so go to beginning of match
+  (goto-char (match-beginning 0)))
+
+(defun vim-search-backward (regexp)
+  (search-backward-regexp regexp))
+
+(defun vim-motion-search-forward (&optional n)
+  (let ((input-regexp (read-from-minibuffer "/")))
+    (setq vim-last-search-motion-command
+	  (lambda () (vim-search-forward input-regexp))
+	  vim-last-search-opposite-motion-command
+	  (lambda () (vim-search-backward input-regexp)))
+    (dotimes (i (or n 1)) (funcall vim-last-search-motion-command)))
+  (vim-update-goal-column))
+
+(defun vim-motion-search-backward (&optional n)
+  (let ((input-regexp (read-from-minibuffer "?")))
+    (setq vim-last-search-motion-command
+	  (lambda () (vim-search-backward input-regexp))
+	  vim-last-search-opposite-motion-command
+	  (lambda () (vim-search-forward input-regexp)))
+    (dotimes (i (or n 1)) (funcall vim-last-search-motion-command)))
+  (vim-update-goal-column))
+
+(defun vim-motion-search-next (&optional n)
+  (unless vim-last-search-motion-command
+    (error "no previous regular expression"))
+  (dotimes (i (or n 1)) (funcall vim-last-search-motion-command))
+  (vim-update-goal-column))
+
+(defun vim-motion-search-previous (&optional n)
+  (unless vim-last-search-opposite-motion-command
+    (error "no previous regular expression"))
+  (dotimes (i (or n 1)) (funcall vim-last-search-opposite-motion-command))
+  (vim-update-goal-column))
+
+(defun vim-motion-goto-line (&optional n)
+  ;;(message "vim-motion-goto-line: %S" n)
+  ;; stop at the first non-blank character on that line
+  (if n
+      (goto-line n)
+    (goto-char (point-max)))
+  (vim-motion-indent)) ; goal column already updated
+
+(put 'vim-motion-goto-line 'linewise t)
+
+(defun vim-motion-column (&optional n)
+  (let ((col (1- (or n 1))))
+    (move-to-column col)
+    (setq vim-goal-column col)))
 
 (defun vim-erase-word ()
   (interactive)
@@ -224,67 +301,6 @@
   (goto-char (line-end-position))
   (vim-insert-mode))
 
-(defvar vim-cursor-column)
-(defvar vim-prefix-arg-motion)
-(defvar vim-last-search-motion-command)
-(defvar vim-last-search-opposite-motion-command)
-(defvar vim-last-repeatable-command)
-
-(defun vim-search-forward (regexp)
-  (forward-char)
-  ;; this sets point at end of match
-  (search-forward-regexp regexp)
-  ;; so go to beginning of match
-  (goto-char (match-beginning 0)))
-
-(defun vim-search-backward (regexp)
-  (search-backward-regexp regexp))
-
-(defun vim-motion-search-forward (&optional n)
-  (save-excursion
-    (let ((input-regexp (read-from-minibuffer "/")))
-      (setq vim-last-search-motion-command
-	    (lambda () (vim-search-forward input-regexp))
-	    vim-last-search-opposite-motion-command
-	    (lambda () (vim-search-backward input-regexp)))
-      (dotimes (i (or n 1)) (funcall vim-last-search-motion-command)))
-    (point)))
-
-(defun vim-motion-search-backward (&optional n)
-  (save-excursion
-    (let ((input-regexp (read-from-minibuffer "?")))
-      (setq vim-last-search-motion-command
-	    (lambda () (vim-search-backward input-regexp))
-	    vim-last-search-opposite-motion-command
-	    (lambda () (vim-search-forward input-regexp)))
-      (dotimes (i (or n 1)) (funcall vim-last-search-motion-command)))
-    (point)))
-
-(defun vim-motion-search-next (&optional n)
-  (save-excursion 
-    (unless vim-last-search-motion-command
-      (error "no previous regular expression"))
-    (dotimes (i (or n 1)) (funcall vim-last-search-motion-command))
-    (point)))
-
-(defun vim-motion-search-previous (&optional n)
-  (save-excursion
-    (unless vim-last-search-opposite-motion-command
-      (error "no previous regular expression"))
-    (dotimes (i (or n 1)) (funcall vim-last-search-opposite-motion-command))
-    (point)))
-
-(defun vim-motion-goto-line (&optional n)
-  ;;(message "vim-motion-goto-line: %S" n)
-  ;; stop at the first non-blank character on that line
-  (save-excursion
-    (if n
-	(goto-line n)
-      (goto-char (point-max)))
-    (vim-motion-indent)))
-
-(put 'vim-motion-goto-line 'linewise t)
-
 (defvar vim-insert-map (make-sparse-keymap))
 (define-key vim-insert-map (kbd "C-u") 'vim-erase-line)
 (define-key vim-insert-map (kbd "C-w") 'vim-erase-word)
@@ -309,19 +325,23 @@
 	    (setq vim-last-repeatable-command
 		  (let ((saved-arg vim-prefix-arg-motion))
 		    (lambda ()
-		      (let ((p (funcall motion saved-arg)))
-			(if (<= (point) p)
-			    ;; then
-			    (funcall action
-				     (line-beginning-position)
-				     (save-excursion (goto-char p)
-						     (let ((end (line-end-position)))
-						       (if (= end (point-max)) end (1+ end)))))
-			  ;; else
-			  (funcall action
-				   (let ((end (line-end-position)))
-				     (if (= end (point-max)) end (1+ end)))
-				   (save-excursion (goto-char p) (line-beginning-position))))))))
+		      (let ((saved-point (point))
+			    (saved-bol (line-beginning-position))
+			    (saved-eol (line-end-position)))
+			(funcall motion saved-arg)
+			(if (<= saved-point (point))
+			    ;; not moved, or moved forward
+			    (progn
+			      (end-of-line)
+			      (unless (= (point) (point-max))
+				(forward-char))
+			      (funcall action saved-bol (point)))
+			  ;; moved backward
+			  (progn
+			    (beginning-of-line)
+			    (unless (= saved-eol (point-max))
+			      (forward-char))
+			    (funcall action (point) saved-eol)))))))
 	    (dotimes (i arg) (funcall vim-last-repeatable-command))
 	    (setq vim-prefix-arg-motion nil))
 	;; character-wise motion
@@ -333,7 +353,12 @@
 	      ;;(message "inclusive char-wise motion, prefix arg is %d" arg)
 	      (setq vim-last-repeatable-command
 		    (let ((saved-arg vim-prefix-arg-motion))
-		      (lambda ()(funcall action (point) (1+ (funcall motion saved-arg))))))
+		      (lambda ()
+			(let ((saved-point (point)))
+			  (funcall motion saved-arg)
+			  (unless (= (point) (point-max))
+			    (forward-char))
+			  (funcall action saved-point (point))))))
 	      (dotimes (i arg) (funcall vim-last-repeatable-command))
 	      (setq vim-prefix-arg-motion nil))
 	  ;; exclusive motion
@@ -343,14 +368,16 @@
 	    ;;(message "exclusive char-wise motion, prefix arg is %d" arg)
 	    (setq vim-last-repeatable-command
 		  (let ((saved-arg vim-prefix-arg-motion))
-		    (lambda () (funcall action (point) (funcall motion saved-arg)))))
+		    (lambda ()
+		      (let ((saved-point (point)))
+			(funcall motion saved-arg)
+			(funcall action saved-point (point))))))
 	    (dotimes (i arg) (funcall vim-last-repeatable-command))
 	    (setq vim-prefix-arg-motion nil))))
     ;; action is nil
     (lambda (arg)
       (interactive "P")
-      (let ((p (funcall motion arg)))
-	(goto-char p)))))
+      (funcall motion arg))))
 
 (defvar vim-normal-map (make-sparse-keymap))
 (define-key vim-normal-map "A" 'vim-append-eol)
@@ -438,6 +465,7 @@
 	   ("t" . vim-motion-forward-till-char)
 	   ("w" . vim-motion-forward-word)
 	   ("{" . vim-motion-backward-paragraph)
+	   ("|" . vim-motion-column)
 	   ("}" . vim-motion-forward-paragraph)
 	   ))
       (let ((motion-key (car pair)) (motion-fn (cdr pair)))
