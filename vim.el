@@ -60,10 +60,13 @@
 	  t)
       nil)))
 
-(defun vim-motion-indent (&optional n)
-  ;; `n` is ignored
+(defun vim-move-to-indent ()
   (goto-char (line-beginning-position))
-  (skip-chars-forward " \t")
+  (skip-chars-forward " \t"))
+  
+(defun vim-motion-indent (n)
+  ;; `n` is ignored
+  (vim-move-to-indent)
   t)
 
 (defun vim-motion-bol (&optional n)
@@ -89,6 +92,17 @@
        ((vim-punct-p c) (skip-chars-forward "!-/:-@[-^`{-~"))
        ((= c 10) (forward-char)))
       (skip-chars-forward " \t")))
+  t)
+
+(defun vim-motion-end-of-word (n)
+  (unless n (setq n 1))
+  (dotimes (i n)
+    (skip-chars-forward " \t")
+    (let ((c (char-after)))
+      (cond
+       ((vim-alnum-p c) (skip-chars-forward "a-zA-Z_0-9"))
+       ((vim-punct-p c) (skip-chars-forward "!-/:-@[-^`{-~"))
+       ((= c 10) (forward-char)))))
   t)
 
 (defun vim-motion-backward-word (n)
@@ -223,10 +237,17 @@
   (if n
       (goto-line n)
     (goto-char (point-max)))
-  (vim-motion-indent)
+  (vim-move-to-indent)
   t)
 
 (put 'vim-motion-goto-line 'linewise t)
+
+(defun vim-motion-first-line (n)
+  (goto-char (point-min))
+  (vim-move-to-indent)
+  t)
+
+(put 'vim-motion-first-line 'linewise t)
 
 (defun vim-motion-column (&optional n)
   (let ((col (1- (or n 1))))
@@ -238,6 +259,28 @@
   t)
 
 (put 'vim-motion-current-line 'linewise t)
+
+(defun vim-motion-window-start (n)
+  ;; `n` is ignored
+  (goto-char (window-start))
+  (vim-move-to-indent)
+  t)
+
+(defun vim-motion-window-end (n)
+  ;; `n` is ignored
+  (goto-char (window-start))
+  (forward-line (1- (window-body-height)))
+  (vim-move-to-indent)
+  t)
+
+(defun vim-motion-window-middle (n)
+  ;; `n` is ignored
+  (goto-char (window-start))
+  (let* ((end (min (window-end) (point-max)))
+	 (lines (count-lines (point) end)))
+    (forward-line (/ lines 2)))
+  (vim-move-to-indent)
+  t)
 
 (defun vim-erase-word ()
   (interactive)
@@ -321,7 +364,7 @@
 
 (defun vim-insert-indent ()
   (interactive)
-  (vim-motion-indent)
+  (vim-move-to-indent)
   (vim-insert-mode))
 
 (defun vim-append-eol ()
@@ -369,9 +412,9 @@
 			  (progn
 			    (beginning-of-line)
 			    (unless (= saved-eol (point-max))
-			      (forward-char))
+			      (setq saved-eol (1+ saved-eol)))
 			    (funcall action (point) saved-eol)))
-			(vim-motion-indent)
+			(vim-move-to-indent)
 			(vim-update-goal-column)))))
 	    (funcall vim-last-repeatable-command vim-last-prefix-arg))
 	;; character-wise motion
@@ -494,13 +537,18 @@
 	   ("/" . vim-motion-search-forward)
 	   ("F" . vim-motion-backward-to-char)
 	   ("G" . vim-motion-goto-line)
+	   ("H" . vim-motion-window-start)
+	   ("L" . vim-motion-window-end)
+	   ("M" . vim-motion-window-middle)
 	   ("0" . vim-motion-bol)
 	   ("T" . vim-motion-backward-till-char)
 	   ("?" . vim-motion-search-backward)
 	   ("N" . vim-motion-search-previous)
 	   ("^" . vim-motion-indent)
 	   ("b" . vim-motion-backward-word)
+	   ("e" . vim-motion-end-of-word)
 	   ("f" . vim-motion-forward-to-char)
+	   ("gg". vim-motion-first-line)
 	   ("h" . vim-motion-left)
 	   ("j" . vim-motion-down)
 	   ("k" . vim-motion-up)
@@ -546,6 +594,12 @@
 (vim-define-operation nil nil)
 (vim-define-operation "c" 'vim-change)
 (vim-define-operation "d" 'vim-delete)
+
+(define-key vim-normal-map "C" (lookup-key vim-normal-map "c$"))
+(define-key vim-normal-map "D" (lookup-key vim-normal-map "d$"))
+(define-key vim-normal-map "S" (lookup-key vim-normal-map "cc"))
+(define-key vim-normal-map "X" (lookup-key vim-normal-map "dh"))
+(define-key vim-normal-map "x" (lookup-key vim-normal-map "dl"))
 
 ;;;###autoload
 (defun vim-mode ()
