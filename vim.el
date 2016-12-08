@@ -18,9 +18,7 @@
   (setq vim-goal-column (current-column)))
 
 (defun vim-move-to-goal-column ()
-  (move-to-column vim-goal-column)
-  (when (and (= (point) (line-end-position)) (> (point) (line-beginning-position)))
-    (backward-char)))
+  (move-to-column vim-goal-column))
 
 (defun vim-motion-up (&optional n)
   (unless n (setq n 1))
@@ -54,7 +52,7 @@
 
 (defun vim-motion-right (&optional n)
   (unless n (setq n 1))
-  (let* ((adjusted-eol (max (1- (line-end-position)) (line-beginning-position)))
+  (let* ((adjusted-eol (line-end-position))
 	 (dest (min adjusted-eol (+ (point) n))))
     (if (> dest (point))
 	(progn
@@ -77,12 +75,10 @@
 (defun vim-motion-eol (&optional n)
   (unless n (setq n 1))
   (goto-char (line-end-position n))
-  (unless (= (point) (line-beginning-position))
-    (backward-char))
   (setq vim-goal-column most-positive-fixnum)
   t)
 
-(put 'vim-motion-eol 'inclusive t)
+(put 'vim-motion-eol 'preserve-goal-column t)
 
 (defun vim-motion-forward-word (&optional n)
   (unless n (setq n 1))
@@ -91,9 +87,19 @@
       (cond
        ((vim-alnum-p c) (skip-chars-forward "a-zA-Z_0-9"))
        ((vim-punct-p c) (skip-chars-forward "!-/:-@[-^`{-~"))
-       )
-      ;; FIXME
-      (skip-chars-forward " \t\n")))
+       ((= c 10) (forward-char)))
+      (skip-chars-forward " \t")))
+  t)
+
+(defun vim-motion-backward-word (n)
+  (unless n (setq n 1))
+  (dotimes (i n)
+    (skip-chars-backward " \t")
+    (let ((c (char-before)))
+      (cond
+       ((vim-alnum-p c) (skip-chars-backward "a-zA-Z_0-9"))
+       ((vim-punct-p c) (skip-chars-backward "!-/:-@[-^`{-~"))
+       ((= c 10) (backward-char)))))
   t)
 
 (defun vim-motion-forward-paragraph (&optional n)
@@ -103,7 +109,7 @@
 (defun vim-motion-backward-paragraph (&optional n)
   (backward-paragraph n)
   t)
-    
+
 (defun vim-motion-forward-sentence (&optional n)
   (forward-sentence n)
   t)
@@ -237,7 +243,7 @@
   (interactive)
   (let ((c (char-before)))
     (if (= c 10) ; at beginning of line
-	(delete-char -1)      
+	(delete-char -1)
       (let ((p (point)))
 	;; First, skip through any whitespace
 	(when (string-match "[ \t]" (char-to-string c))
@@ -329,12 +335,6 @@
 ;; breaks M- keys
 (define-key vim-insert-map (kbd "ESC") 'vim-escape)
 
-(defun vim-repeat-last-command (arg)
-  (interactive "P")
-  (when vim-last-repeatable-command
-    (setq vim-last-prefix-arg (or arg vim-last-prefix-arg))
-    (funcall vim-last-repeatable-command vim-last-prefix-arg)))
-
 (defun vim-combined-prefix-arg (arg)
   (if arg
       (if vim-prefix-arg-motion
@@ -349,9 +349,9 @@
 	  ;; line-wise motion
 	  (lambda (arg)
 	    (interactive "P")
-	    (unless arg (setq arg 1))
 	    ;;(message (format "line-wise motion, prefix arg is %d" arg))
 	    (setq vim-last-prefix-arg (vim-combined-prefix-arg arg)
+		  vim-prefix-arg-motion nil
 		  vim-last-repeatable-command
 		  (lambda (arg)
 		    (let ((saved-point (point))
@@ -373,8 +373,7 @@
 			    (funcall action (point) saved-eol)))
 			(vim-motion-indent)
 			(vim-update-goal-column)))))
-	    (funcall vim-last-repeatable-command vim-last-prefix-arg)
-	    (setq vim-prefix-arg-motion nil))
+	    (funcall vim-last-repeatable-command vim-last-prefix-arg))
 	;; character-wise motion
 	(if (get motion 'inclusive)
 	    ;; inclusive motion
@@ -383,6 +382,7 @@
 	      (unless arg (setq arg 1))
 	      ;;(message "inclusive char-wise motion, prefix arg is %d" arg)
 	      (setq vim-last-prefix-arg (vim-combined-prefix-arg arg)
+		    vim-prefix-arg-motion nil
 		    vim-last-repeatable-command
 		    (lambda (arg)
 		      (let ((saved-point (point)))
@@ -391,22 +391,21 @@
 			    (forward-char))
 			  (funcall action saved-point (point))
 			  (vim-update-goal-column)))))
-	      (funcall vim-last-repeatable-command vim-last-prefix-arg)
-	      (setq vim-prefix-arg-motion nil))
+	      (funcall vim-last-repeatable-command vim-last-prefix-arg))
 	  ;; exclusive motion
 	  (lambda (arg)
 	    (interactive "P")
 	    (unless arg (setq arg 1))
 	    ;;(message "exclusive char-wise motion, prefix arg is %d" arg)
 	    (setq vim-last-prefix-arg (vim-combined-prefix-arg arg)
+		  vim-prefix-arg-motion nil
 		  vim-last-repeatable-command
 		  (lambda (arg)
 		    (let ((saved-point (point)))
 		      (when (funcall motion arg)
 			(funcall action saved-point (point))
 			(vim-update-goal-column)))))
-	    (funcall vim-last-repeatable-command vim-last-prefix-arg)
-	    (setq vim-prefix-arg-motion nil))))
+	    (funcall vim-last-repeatable-command vim-last-prefix-arg))))
     ;; action is nil
     (let ((update-goal-column-if-necessary
 	   (if (get motion 'preserve-goal-column)
@@ -415,7 +414,13 @@
       (lambda (arg)
 	(interactive "P")
 	(when (funcall motion arg)
-	  (funcall update-goal-column-if-necessary))))) )
+	  (funcall update-goal-column-if-necessary))))))
+
+(defun vim-repeat-last-command (arg)
+  (interactive "P")
+  (when vim-last-repeatable-command
+    (setq vim-last-prefix-arg (or arg vim-last-prefix-arg))
+    (funcall vim-last-repeatable-command vim-last-prefix-arg)))
 
 (defvar vim-normal-map (make-sparse-keymap))
 (define-key vim-normal-map "A" 'vim-append-eol)
@@ -438,7 +443,7 @@
     (interactive)
     (prefix-command-preserve-state)
     (setq prefix-arg count)
-    (let ((map-copy (copy-keymap map)))    
+    (let ((map-copy (copy-keymap map)))
       (define-key map-copy [?0] (vim-digit-argument-2 map-copy 0))
       (define-key map-copy [?1] (vim-digit-argument-2 map-copy 1))
       (define-key map-copy [?2] (vim-digit-argument-2 map-copy 2))
@@ -459,7 +464,7 @@
     (setq vim-prefix-arg-motion (+ (* vim-prefix-arg-motion 10) count))
     (set-transient-map map)))
 
-(defun vim-digit-argument-motion-with-map (map count)
+(defun vim-digit-argument-motion (map count)
   (lambda ()
     (interactive)
     (prefix-command-preserve-state)
@@ -494,6 +499,7 @@
 	   ("?" . vim-motion-search-backward)
 	   ("N" . vim-motion-search-previous)
 	   ("^" . vim-motion-indent)
+	   ("b" . vim-motion-backward-word)
 	   ("f" . vim-motion-forward-to-char)
 	   ("h" . vim-motion-left)
 	   ("j" . vim-motion-down)
@@ -512,15 +518,15 @@
       (define-key op-map op-key (vim-compose-command op-fn 'vim-motion-current-line)))
     (if op-key
 	(progn
-	  (define-key op-map "1" (vim-digit-argument-motion-with-map op-map 1))
-	  (define-key op-map "2" (vim-digit-argument-motion-with-map op-map 2))
-	  (define-key op-map "3" (vim-digit-argument-motion-with-map op-map 3))
-	  (define-key op-map "4" (vim-digit-argument-motion-with-map op-map 4))
-	  (define-key op-map "5" (vim-digit-argument-motion-with-map op-map 5))
-	  (define-key op-map "6" (vim-digit-argument-motion-with-map op-map 6))
-	  (define-key op-map "7" (vim-digit-argument-motion-with-map op-map 7))
-	  (define-key op-map "8" (vim-digit-argument-motion-with-map op-map 8))
-	  (define-key op-map "9" (vim-digit-argument-motion-with-map op-map 9))
+	  (define-key op-map "1" (vim-digit-argument-motion op-map 1))
+	  (define-key op-map "2" (vim-digit-argument-motion op-map 2))
+	  (define-key op-map "3" (vim-digit-argument-motion op-map 3))
+	  (define-key op-map "4" (vim-digit-argument-motion op-map 4))
+	  (define-key op-map "5" (vim-digit-argument-motion op-map 5))
+	  (define-key op-map "6" (vim-digit-argument-motion op-map 6))
+	  (define-key op-map "7" (vim-digit-argument-motion op-map 7))
+	  (define-key op-map "8" (vim-digit-argument-motion op-map 8))
+	  (define-key op-map "9" (vim-digit-argument-motion op-map 9))
 	  )
       (progn
 	(define-key op-map "1" (vim-digit-argument op-map 1))
