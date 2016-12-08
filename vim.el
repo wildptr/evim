@@ -165,9 +165,10 @@
 (put 'vim-motion-forward-till-char 'inclusive t)
 
 (defvar vim-prefix-arg-motion nil)
-(defvar vim-last-search-motion-command)
-(defvar vim-last-search-opposite-motion-command)
-(defvar vim-last-repeatable-command)
+(defvar vim-last-search-motion-command nil)
+(defvar vim-last-search-opposite-motion-command nil)
+(defvar vim-last-prefix-arg nil)
+(defvar vim-last-repeatable-command nil)
 
 (defun vim-search-forward (regexp)
   (save-excursion
@@ -296,11 +297,6 @@
 (defun vim-delete (begin end)
   (kill-region begin end))
 
-(defun vim-delete-line ()
-  (interactive)
-  (vim-delete (line-beginning-position) (+ (line-end-position) 1))
-  (vim-motion-indent))
-
 ;; enter normal mode
 (defun vim-escape ()
   (interactive)
@@ -336,8 +332,15 @@
 (defun vim-repeat-last-command (arg)
   (interactive "P")
   (when vim-last-repeatable-command
-    (dotimes (i (or arg 1))
-      (funcall vim-last-repeatable-command))))
+    (setq vim-last-prefix-arg (or arg vim-last-prefix-arg))
+    (funcall vim-last-repeatable-command vim-last-prefix-arg)))
+
+(defun vim-combined-prefix-arg (arg)
+  (if arg
+      (if vim-prefix-arg-motion
+	  (* arg vim-prefix-arg-motion)
+	arg)
+    vim-prefix-arg-motion))
 
 (defun vim-compose-command (action motion)
   (if action
@@ -348,30 +351,30 @@
 	    (interactive "P")
 	    (unless arg (setq arg 1))
 	    ;;(message (format "line-wise motion, prefix arg is %d" arg))
-	    (setq vim-last-repeatable-command
-		  (let ((saved-arg vim-prefix-arg-motion))
-		    (lambda ()
-		      (let ((saved-point (point))
-			    (saved-bol (line-beginning-position))
-			    (saved-eol (line-end-position)))
-			(when (funcall motion saved-arg)
-			  (if (<= saved-point (point))
-			      ;; not moved, or moved forward
-			      (progn
-				(end-of-line)
-				(unless (= (point) (point-max))
-				  (forward-char))
-				(funcall action saved-bol (point)))
-			    ;; moved backward
+	    (setq vim-last-prefix-arg (vim-combined-prefix-arg arg)
+		  vim-last-repeatable-command
+		  (lambda (arg)
+		    (let ((saved-point (point))
+			  (saved-bol (line-beginning-position))
+			  (saved-eol (line-end-position)))
+		      (when (funcall motion arg)
+			(if (<= saved-point (point))
+			    ;; not moved, or moved forward
 			    (progn
-			      (beginning-of-line)
-			      (unless (= saved-eol (point-max))
+			      (end-of-line)
+			      (unless (= (point) (point-max))
 				(forward-char))
-			      (funcall action (point) saved-eol))))))))
-	    (dotimes (i arg) (funcall vim-last-repeatable-command))
-	    (setq vim-prefix-arg-motion nil)
-	    (vim-motion-indent)
-	    (vim-update-goal-column))
+			      (funcall action saved-bol (point)))
+			  ;; moved backward
+			  (progn
+			    (beginning-of-line)
+			    (unless (= saved-eol (point-max))
+			      (forward-char))
+			    (funcall action (point) saved-eol)))
+			(vim-motion-indent)
+			(vim-update-goal-column)))))
+	    (funcall vim-last-repeatable-command vim-last-prefix-arg)
+	    (setq vim-prefix-arg-motion nil))
 	;; character-wise motion
 	(if (get motion 'inclusive)
 	    ;; inclusive motion
@@ -379,31 +382,31 @@
 	      (interactive "P")
 	      (unless arg (setq arg 1))
 	      ;;(message "inclusive char-wise motion, prefix arg is %d" arg)
-	      (setq vim-last-repeatable-command
-		    (let ((saved-arg vim-prefix-arg-motion))
-		      (lambda ()
-			(let ((saved-point (point)))
-			  (when (funcall motion saved-arg)
-			    (unless (= (point) (point-max))
-			      (forward-char))
-			    (funcall action saved-point (point)))))))
-	      (dotimes (i arg) (funcall vim-last-repeatable-command))
-	      (setq vim-prefix-arg-motion nil)
-	      (vim-update-goal-column))
+	      (setq vim-last-prefix-arg (vim-combined-prefix-arg arg)
+		    vim-last-repeatable-command
+		    (lambda (arg)
+		      (let ((saved-point (point)))
+			(when (funcall motion arg)
+			  (unless (= (point) (point-max))
+			    (forward-char))
+			  (funcall action saved-point (point))
+			  (vim-update-goal-column)))))
+	      (funcall vim-last-repeatable-command vim-last-prefix-arg)
+	      (setq vim-prefix-arg-motion nil))
 	  ;; exclusive motion
 	  (lambda (arg)
 	    (interactive "P")
 	    (unless arg (setq arg 1))
 	    ;;(message "exclusive char-wise motion, prefix arg is %d" arg)
-	    (setq vim-last-repeatable-command
-		  (let ((saved-arg vim-prefix-arg-motion))
-		    (lambda ()
-		      (let ((saved-point (point)))
-			(when (funcall motion saved-arg)
-			  (funcall action saved-point (point)))))))
-	    (dotimes (i arg) (funcall vim-last-repeatable-command))
-	    (setq vim-prefix-arg-motion nil)
-	    (vim-update-goal-column))))
+	    (setq vim-last-prefix-arg (vim-combined-prefix-arg arg)
+		  vim-last-repeatable-command
+		  (lambda (arg)
+		    (let ((saved-point (point)))
+		      (when (funcall motion arg)
+			(funcall action saved-point (point))
+			(vim-update-goal-column)))))
+	    (funcall vim-last-repeatable-command vim-last-prefix-arg)
+	    (setq vim-prefix-arg-motion nil))))
     ;; action is nil
     (let ((update-goal-column-if-necessary
 	   (if (get motion 'preserve-goal-column)
@@ -412,13 +415,7 @@
       (lambda (arg)
 	(interactive "P")
 	(when (funcall motion arg)
-	  (funcall update-goal-column-if-necessary))))))
-
-(defun vim-delete-line (arg)
-  (interactive "P")
-  (let ((bol (line-beginning-position)))
-    (forward-line arg)
-    (vim-delete bol (point))))
+	  (funcall update-goal-column-if-necessary))))) )
 
 (defvar vim-normal-map (make-sparse-keymap))
 (define-key vim-normal-map "A" 'vim-append-eol)
