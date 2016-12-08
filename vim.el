@@ -94,6 +94,16 @@
       (skip-chars-forward " \t")))
   t)
 
+(defun vim-motion-forward-big-word (n)
+  (unless n (setq n 1))
+  (dotimes (i n)
+    (let ((c (char-after)))
+      (cond
+       ((or (vim-alnum-p c) (vim-punct-p c)) (skip-chars-forward "a-zA-Z_0-9!-/:-@[-^`{-~"))
+       ((= c 10) (forward-char)))
+      (skip-chars-forward " \t")))
+  t)
+
 (defun vim-motion-end-of-word (n)
   (unless n (setq n 1))
   (dotimes (i n)
@@ -105,6 +115,16 @@
        ((= c 10) (forward-char)))))
   t)
 
+(defun vim-motion-end-of-big-word (n)
+  (unless n (setq n 1))
+  (dotimes (i n)
+    (skip-chars-forward " \t")
+    (let ((c (char-after)))
+      (cond
+       ((or (vim-alnum-p c) (vim-punct-p c)) (skip-chars-forward "a-zA-Z_0-9!-/:-@[-^`{-~"))
+       ((= c 10) (forward-char)))))
+  t)
+
 (defun vim-motion-backward-word (n)
   (unless n (setq n 1))
   (dotimes (i n)
@@ -113,6 +133,16 @@
       (cond
        ((vim-alnum-p c) (skip-chars-backward "a-zA-Z_0-9"))
        ((vim-punct-p c) (skip-chars-backward "!-/:-@[-^`{-~"))
+       ((= c 10) (backward-char)))))
+  t)
+
+(defun vim-motion-backward-big-word (n)
+  (unless n (setq n 1))
+  (dotimes (i n)
+    (skip-chars-backward " \t")
+    (let ((c (char-before)))
+      (cond
+       ((or (vim-alnum-p c) (vim-punct-p c)) (skip-chars-backward "a-zA-Z_0-9!-/:-@[-^`{-~"))
        ((= c 10) (backward-char)))))
   t)
 
@@ -281,6 +311,20 @@
     (forward-line (/ lines 2)))
   (vim-move-to-indent)
   t)
+
+(defun vim-motion-forward-char (n)
+  (if (< (point) (point-max))
+      (progn
+	(forward-char n)
+	t)
+    nil))
+
+(defun vim-motion-backward-char (n)
+  (if (> (point) (point-min))
+      (progn
+	(backward-char n)
+	t)
+    nil))
 
 (defun vim-erase-word ()
   (interactive)
@@ -531,15 +575,20 @@
     (dolist
 	(pair
 	 '(
+	   ("". vim-motion-backward-char)
+	   (" " . vim-motion-forward-char)
 	   ("$" . vim-motion-eol)
 	   ("(" . vim-motion-backward-sentence)
 	   (")" . vim-motion-forward-sentence)
 	   ("/" . vim-motion-search-forward)
+	   ("B" . vim-motion-backward-big-word)
+	   ("E" . vim-motion-end-of-big-word)
 	   ("F" . vim-motion-backward-to-char)
 	   ("G" . vim-motion-goto-line)
 	   ("H" . vim-motion-window-start)
 	   ("L" . vim-motion-window-end)
 	   ("M" . vim-motion-window-middle)
+	   ("W" . vim-motion-forward-big-word)
 	   ("0" . vim-motion-bol)
 	   ("T" . vim-motion-backward-till-char)
 	   ("?" . vim-motion-search-backward)
