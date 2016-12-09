@@ -394,7 +394,8 @@
 (defun vim-escape ()
   (interactive)
   (setq cursor-type 'box)
-  (use-local-map vim-normal-map))
+  (use-local-map vim-normal-map)
+  (vim-update-goal-column))
 
 (defun vim-insert-mode ()
   (interactive)
@@ -403,8 +404,7 @@
 
 (defun vim-insert (arg)
   (interactive "P")
-  (vim-insert-mode)
-  )
+  (vim-insert-mode))
 
 (defun vim-insert-indent ()
   (interactive)
