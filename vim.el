@@ -1,5 +1,7 @@
 ;; -*- lexical-binding: t -*-
 
+;; Utility predicates
+
 (defun vim-alnum-p (c)
   (string-match "[a-zA-Z_0-9]" (char-to-string c)))
 
@@ -12,13 +14,80 @@
 (defun vim-at-eol ()
   (= (point) (line-end-position)))
 
-(defvar vim-goal-column 0)
+;; Global variables
+;(defvar vim-goal-column 0)
+(defvar vim-prefix-arg-motion nil)
+(defvar vim-last-search-motion-command nil)
+(defvar vim-last-search-opposite-motion-command nil)
+(defvar vim-last-prefix-arg nil)
+(defvar vim-last-repeatable-command nil)
+(defvar vim-insert-map (make-sparse-keymap))
+(defvar vim-normal-map (make-sparse-keymap))
+
+;; Utility procedures
+(defun vim-move-to-indent ()
+  (goto-char (line-beginning-position))
+  (skip-chars-forward " \t"))
+
+(defun vim-forward-to-char (c)
+  ;; look for c in range (point+1, eol)
+  ;; throws error if not found
+  (let ((saved-point (point))) ; lest we fail
+    (when (and (/= (point) (point-max)) (/= (char-after) 10))
+      (forward-char))
+    (while (and (/= (point) (point-max)) (/= (char-after) 10) (/= (char-after) c))
+      (forward-char))
+    (unless (= (char-after) c)
+      (goto-char saved-point)
+      (error "vim-forward-to-char: '%c' not found" c)))
+  t)
+
+(defun vim-backward-till-char (c)
+  ;; look for c in range (bol, point)
+  ;; throws error if not found
+  (let ((saved-point (point)))
+    (while (and (/= (point) (point-min)) (/= (char-before) 10) (/= (char-before) c))
+      (backward-char))
+    (unless (= (char-before) c)
+      (goto-char saved-point)
+      (error "vim-backward-to-char: '%c' not found" c)))
+  t)
+
+(defun vim-search-forward (regexp)
+  (save-excursion
+    (forward-char)
+    ;; this sets point at end of match
+    (search-forward-regexp regexp))
+  ;; so go to beginning of match
+  (goto-char (match-beginning 0)))
+
+(defun vim-search-backward (regexp)
+  (search-backward-regexp regexp))
+
+;; Goal column related routines
+
+(defun vim-set-goal-column (col)
+  (setq temporary-goal-column
+	(cond
+	 ((consp temporary-goal-column)
+	  (cons col (cdr temporary-goal-column)))
+	 ((integerp temporary-goal-column)
+	  temporary-goal-column)
+	 ((floatp temporary-goal-column)
+	  (truncate temporary-goal-column)))))
 
 (defun vim-update-goal-column ()
-  (setq vim-goal-column (current-column)))
+  (vim-set-goal-column (current-column)))
 
 (defun vim-move-to-goal-column ()
-  (move-to-column vim-goal-column))
+  (let ((n
+	 (if (consp temporary-goal-column)
+	     (+ (car temporary-goal-column) (cdr temporary-goal-column))
+	   temporary-goal-column)))
+    (move-to-column
+     (if (integerp n) n (truncate n)))))
+
+;; Motions
 
 (defun vim-motion-up (&optional n)
   (unless n (setq n 1))
@@ -60,10 +129,6 @@
 	  t)
       nil)))
 
-(defun vim-move-to-indent ()
-  (goto-char (line-beginning-position))
-  (skip-chars-forward " \t"))
-  
 (defun vim-motion-indent (n)
   ;; `n` is ignored
   (vim-move-to-indent)
@@ -78,7 +143,7 @@
 (defun vim-motion-eol (&optional n)
   (unless n (setq n 1))
   (goto-char (line-end-position n))
-  (setq vim-goal-column most-positive-fixnum)
+  (vim-set-goal-column most-positive-fixnum)
   t)
 
 (put 'vim-motion-eol 'preserve-goal-column t)
@@ -162,30 +227,6 @@
   (backward-sentence n)
   t)
 
-(defun vim-forward-to-char (c)
-  ;; look for c in range (point+1, eol)
-  ;; throws error if not found
-  (let ((saved-point (point))) ; lest we fail
-    (when (and (/= (point) (point-max)) (/= (char-after) 10))
-      (forward-char))
-    (while (and (/= (point) (point-max)) (/= (char-after) 10) (/= (char-after) c))
-      (forward-char))
-    (unless (= (char-after) c)
-      (goto-char saved-point)
-      (error "vim-forward-to-char: '%c' not found" c)))
-  t)
-
-(defun vim-backward-till-char (c)
-  ;; look for c in range (bol, point)
-  ;; throws error if not found
-  (let ((saved-point (point)))
-    (while (and (/= (point) (point-min)) (/= (char-before) 10) (/= (char-before) c))
-      (backward-char))
-    (unless (= (char-before) c)
-      (goto-char saved-point)
-      (error "vim-backward-to-char: '%c' not found" c)))
-  t)
-
 (defun vim-motion-forward-to-char (&optional n)
   (unless n (setq n 1))
   (let ((c (read-char)))
@@ -213,23 +254,6 @@
   t)
 
 (put 'vim-motion-forward-till-char 'inclusive t)
-
-(defvar vim-prefix-arg-motion nil)
-(defvar vim-last-search-motion-command nil)
-(defvar vim-last-search-opposite-motion-command nil)
-(defvar vim-last-prefix-arg nil)
-(defvar vim-last-repeatable-command nil)
-
-(defun vim-search-forward (regexp)
-  (save-excursion
-    (forward-char)
-    ;; this sets point at end of match
-    (search-forward-regexp regexp))
-  ;; so go to beginning of match
-  (goto-char (match-beginning 0)))
-
-(defun vim-search-backward (regexp)
-  (search-backward-regexp regexp))
 
 (defun vim-motion-search-forward (&optional n)
   (let ((input-regexp (read-from-minibuffer "/")))
@@ -282,7 +306,7 @@
 (defun vim-motion-column (&optional n)
   (let ((col (1- (or n 1))))
     (move-to-column col)
-    (setq vim-goal-column col))
+    (vim-set-goal-column col))
   t)
 
 (defun vim-motion-current-line (&optional n)
@@ -325,6 +349,8 @@
 	(backward-char n)
 	t)
     nil))
+
+;; Editing commands
 
 (defun vim-erase-word ()
   (interactive)
@@ -382,12 +408,12 @@
   (indent-for-tab-command)
   (vim-insert-mode))
 
-(defun vim-change (begin end)
+(defun vim-operator-change (begin end)
   (goto-char begin)
-  (vim-delete begin end)
+  (vim-operator-delete begin end)
   (vim-insert-mode))
 
-(defun vim-delete (begin end)
+(defun vim-operator-delete (begin end)
   (kill-region begin end))
 
 ;; enter normal mode
@@ -416,7 +442,6 @@
   (goto-char (line-end-position))
   (vim-insert-mode))
 
-(defvar vim-insert-map (make-sparse-keymap))
 (define-key vim-insert-map (kbd "C-u") 'vim-erase-line)
 (define-key vim-insert-map (kbd "C-w") 'vim-erase-word)
 ;; breaks M- keys
@@ -509,15 +534,6 @@
     (setq vim-last-prefix-arg (or arg vim-last-prefix-arg))
     (funcall vim-last-repeatable-command vim-last-prefix-arg)))
 
-(defvar vim-normal-map (make-sparse-keymap))
-(define-key vim-normal-map "A" 'vim-append-eol)
-(define-key vim-normal-map "I" 'vim-insert-indent)
-(define-key vim-normal-map "O" 'vim-open-line-before)
-(define-key vim-normal-map "P" 'yank) ; ***
-(define-key vim-normal-map "i" 'vim-insert)
-(define-key vim-normal-map "o" 'vim-open-line)
-(define-key vim-normal-map "." 'vim-repeat-last-command)
-
 (defun vim-digit-argument-2 (map count)
   (lambda ()
     (interactive)
@@ -570,7 +586,7 @@
       (set-transient-map map-copy)
     )))
 
-(defun vim-define-operation (op-key op-fn)
+(defun vim-define-operator (op-key op-fn)
   (let ((op-map (if op-key (make-sparse-keymap) vim-normal-map)))
     (dolist
 	(pair
@@ -640,10 +656,20 @@
       (define-key vim-normal-map op-key op-map))
     ))
 
-(vim-define-operation nil nil)
-(vim-define-operation "c" 'vim-change)
-(vim-define-operation "d" 'vim-delete)
+(vim-define-operator nil nil)
+(vim-define-operator "c" 'vim-operator-change)
+(vim-define-operator "d" 'vim-operator-delete)
 
+;; Bind keys to commands
+(define-key vim-normal-map "A" 'vim-append-eol)
+(define-key vim-normal-map "I" 'vim-insert-indent)
+(define-key vim-normal-map "O" 'vim-open-line-before)
+(define-key vim-normal-map "P" 'yank)
+(define-key vim-normal-map "i" 'vim-insert)
+(define-key vim-normal-map "o" 'vim-open-line)
+(define-key vim-normal-map "." 'vim-repeat-last-command)
+
+;; Alias commands
 (define-key vim-normal-map "C" (lookup-key vim-normal-map "c$"))
 (define-key vim-normal-map "D" (lookup-key vim-normal-map "d$"))
 (define-key vim-normal-map "S" (lookup-key vim-normal-map "cc"))
